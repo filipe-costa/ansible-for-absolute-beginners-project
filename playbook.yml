@@ -1,0 +1,160 @@
+---
+-
+  name: Configure FirewallID
+  hosts: localhost
+  tasks:
+    - 
+      name: Install FirewallD
+      yum:
+        name: firewalld
+        state: installed
+        update_cache: True
+    -
+      name: Start service
+      service:
+        name: firewalld
+        state: started
+    -
+      name: Enable FirewallD
+      systemd:
+        enabled: yes
+        name: firewalld
+        state: started
+-
+  name: Configure MariaDB
+  hosts: localhost
+  tasks:
+    - 
+      name: Install MariaDB
+      yum:
+        name: mariadb-server
+        state: installed
+        update_cache: True
+    - 
+      name: Create my.cnf file
+      command: touch /etc/my.cnf
+      args:
+        creates: /etc/my.cnf
+    -
+      name: Start database service
+      service:
+        name: mariadb
+        state: started
+    -
+      name: Enable MariaDB
+      systemd:
+        enabled: yes
+        name: mariadb
+        state: started
+    - 
+      name: Configure FirewallD for Database
+      ansible.posix.firewalld: 
+        port: 3306/tcp
+        permanent: yes
+        state: enabled
+    - 
+      name: Reload FirewallD after DB configuration
+      systemd:
+        enabled: yes
+        name: firewalld
+        state: reloaded
+    - 
+      name: Create Database
+      community.mysql.mysql_db:
+        name: ecomdb
+        state: present
+    - 
+      name: Create and grant all privileges to user
+      community.mysql.mysql_user:
+        name: ecomuser
+        host: localhost
+        password: ecompassword
+        priv: '*.*:ALL'
+        state: present
+    - 
+      name: Flush privileges
+      community.mysql.mysql_query:
+        login_user: ecomuser
+        login_password: ecompassword
+        login_db: ecomdb
+        query: FLUSH PRIVILEGES
+    - 
+      name: Create product inventory .SQL script
+      copy: 
+        dest: ./db-load-script.sql
+        content: |
+          USE ecomdb;
+          CREATE TABLE IF NOT EXISTS products (id mediumint(8) unsigned NOT NULL auto_increment,Name varchar(255) default NULL,Price varchar(255) default NULL, ImageUrl varchar(255) default NULL,PRIMARY KEY (id)) AUTO_INCREMENT=1;
+          INSERT INTO products (Name,Price,ImageUrl) VALUES ("Laptop","100","c-1.png"),("Drone","200","c-2.png"),("VR","300","c-3.png"),("Tablet","50","c-5.png"),("Watch","90","c-6.png"),("Phone Covers","20","c-7.png"),("Phone","80","c-8.png"),("Laptop","150","c-4.png");
+    -
+      name: Run SQL script
+      mysql_db:
+        state: import
+        name: ecomdb
+        target: ./db-load-script.sql
+
+-
+  name: Configure Web
+  hosts: localhost
+  tasks:
+    - 
+      name: Install Web Packages
+      yum:
+        name: 
+          - httpd
+          - php
+          - php-mysqlnd
+        state: present
+    -
+      name: Configure FirewallD for Web server
+      ansible.posix.firewalld: 
+        port: 80/tcp
+        permanent: yes
+        state: enabled
+    - 
+      name: Reload FirewallD after Web server configuration
+      systemd:
+        enabled: yes
+        name: firewalld
+        state: reloaded
+    -
+      name: Change DirectoryIndex index.html to DirectoryIndex index.php to make the php page the default page
+      command: sed -i 's/index.html/index.php/g' /etc/httpd/conf/httpd.conf
+    -
+      name: Start HTTPD
+      service:
+        name: httpd
+        state: started
+    - 
+      name: Enable HTTPD
+      systemd:
+        enabled: yes
+        name: httpd
+        state: started
+    - 
+      name: Configure Git
+      yum:
+        name: git
+        state: present
+        update_cache: True
+    -
+      name: Clone Repository into Directory
+      git:
+        repo: https://github.com/kodekloudhub/learning-app-ecommerce.git
+        dest: /var/www/html/
+    - 
+      name: Update index.php
+      command: sed -i 's/172.20.1.101/localhost/g' /var/www/html/index.php
+- 
+  name: Test Web
+  hosts: localhost
+  tasks:
+    - 
+      name: Return Web content
+      uri:
+        url: http://localhost
+        return_content: yes
+      register: response
+    
+    - debug: msg="{{ response.content }}"
+  
